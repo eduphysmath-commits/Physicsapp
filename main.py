@@ -97,7 +97,7 @@ if exams_list:
                 
                 with col_score:
                     new_score = st.number_input("Қорытынды балл:", value=sub.get('score', 0), key=f"score_update_{sub['id']}")
-                    new_feedback = st.text_area("Мұғалімнің пікірі:", value=sub.get('ai_feedback', ''), key=f"feedback_update_{sub['id']}")
+                    new_feedback = st.text_area("Мұғалімнің пікірі:", value=sub.get('ai_feedback', ''), height=400, key=f"feedback_update_{sub['id']}")
                 
                 with col_btn:
                     st.write("") 
