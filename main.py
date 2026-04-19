@@ -2,32 +2,43 @@ import streamlit as st
 import requests
 import streamlit.components.v1 as components
 import json
-import google.generativeai as genai
+from google import genai
 
-# --- 1. ПАРАМЕТРЛЕР ---
-URL = "https://bjqoazdkiyhrdrfkkgaz.supabase.co"
-KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJqcW9hemRraXlocmRyZmtrZ2F6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk3NTM4NjIsImV4cCI6MjA4NTMyOTg2Mn0.0t4S6fa9CmYa6WBdDvkVr4V4H91wLx9xLYtcEdriX4I"
+# =============================================================================
+# 1. ПАРАМЕТРЛЕР
+# =============================================================================
+SUPABASE_URL = "https://bjqoazdkiyhrdrfkkgaz.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJqcW9hemRraXlocmRyZmtrZ2F6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk3NTM4NjIsImV4cCI6MjA4NTMyOTg2Mn0.0t4S6fa9CmYa6WBdDvkVr4V4H91wLx9xLYtcEdriX4I"
 TABLE_NAME = "pisa_light_kz"
 
-GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY_HERE")
+GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
 
-st.set_page_config(page_title="PISA: Мұхит түбіндегі жарық", layout="wide", page_icon="🌊")
+st.set_page_config(
+    page_title="PISA: Мұхит түбіндегі жарық",
+    layout="wide",
+    page_icon="🌊"
+)
 
-if 'submitted' not in st.session_state:
-    st.session_state.submitted = False
-if 'last_result' not in st.session_state:
-    st.session_state.last_result = None
+# =============================================================================
+# 2. SESSION STATE
+# =============================================================================
+if 'page' not in st.session_state:
+    st.session_state.page = 'exam'  # 'exam' немесе 'result'
+if 'result_data' not in st.session_state:
+    st.session_state.result_data = None
 
-# --- 2. СТИЛЬ ---
+# =============================================================================
+# 3. СТИЛЬ
+# =============================================================================
 st.markdown("""
-    <style>
-    * { -webkit-user-select: none; user-select: none; } 
+<style>
+    * { -webkit-user-select: none; user-select: none; }
     .stApp { background: linear-gradient(135deg, #e0f7fa 0%, #e1f5fe 100%); }
-    .main-title { 
-        color: #01579b; 
-        text-align: center; 
-        font-weight: 800; 
-        padding: 20px; 
+    .main-title {
+        color: #01579b;
+        text-align: center;
+        font-weight: 800;
+        padding: 20px;
         border-bottom: 3px solid #0288d1;
         background: white;
         border-radius: 10px;
@@ -42,12 +53,12 @@ st.markdown("""
         box-shadow: 0 2px 10px rgba(0,0,0,0.08);
         line-height: 1.7;
     }
-    .question-box { 
-        background-color: white; 
-        padding: 20px; 
-        border-radius: 10px; 
-        border-left: 5px solid #0288d1; 
-        margin-bottom: 15px; 
+    .question-box {
+        background-color: white;
+        padding: 20px;
+        border-radius: 10px;
+        border-left: 5px solid #0288d1;
+        margin-bottom: 15px;
         box-shadow: 2px 2px 10px rgba(0,0,0,0.1);
     }
     .q-number {
@@ -59,38 +70,42 @@ st.markdown("""
         font-weight: bold;
         margin-right: 10px;
     }
-    .result-card {
-        background: white;
-        padding: 25px;
-        border-radius: 15px;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.15);
-        margin: 15px 0;
-        border-top: 5px solid #0288d1;
-    }
-    </style>
+</style>
 """, unsafe_allow_html=True)
 
-# --- 3. GEMINI AI БАҒАЛАУШЫ (ҚАТАЛ СТИЛЬ) ---
-def evaluate_with_gemini(answers):
-    """Gemini API арқылы 3 сұрақты бір промптпен тексереді"""
-    try:
-        genai.configure(api_key=GEMINI_API_KEY)
-        model = genai.GenerativeModel('gemini-2.0-flash-exp')
-        
-        prompt = f"""Сен физика пәнінің қатал, бірақ әділ сарапшы мұғалімісің.
+
+# =============================================================================
+# 4. GEMINI AI БАҒАЛАУ ФУНКЦИЯСЫ
+# =============================================================================
+def evaluate_with_gemini(q1, q2, q3):
+    """
+    3 сұрақты бір промптпен тексереді.
+    Қайтарады: dict немесе None (қате болса)
+    """
+    if not GEMINI_API_KEY:
+        return {
+            "error": "⚠️ Gemini API кілті орнатылмаған. Streamlit Cloud Secrets-те GEMINI_API_KEY қосыңыз.",
+            "q1_score": 0, "q2_score": 0, "q3_score": 0, "total_score": 0,
+            "q1_feedback": "API кілт жоқ",
+            "q2_feedback": "API кілт жоқ",
+            "q3_feedback": "API кілт жоқ",
+            "general_feedback": "Мұғалім қолмен тексереді."
+        }
+    
+    prompt = f"""Сен физика пәнінің қатал, бірақ әділ сарапшы мұғалімісің.
 Сенің міндетің — 8-сынып оқушысының PISA форматындағы "Мұхит түбіндегі жарық (оптикалық талшық)" тақырыбына берген 3 жауабын тексеру.
 
 ═══════════════════════════════════════════
 📌 1-СҰРАҚ (Максимум 1 балл) — Көп таңдаулы
 ═══════════════════════════════════════════
 Сұрақ: "Оптикалық талшықтың ішінде жарық сыртқа шашырап кетпей, тек іште қалуы үшін қандай басты шарт орындалуы керек?"
-Дұрыс жауап кілті: **В** (Түсу бұрышы шекті бұрыштан үлкен болуы керек)
+Дұрыс жауап: В (Түсу бұрышы шекті бұрыштан үлкен болуы керек)
 
-Бағалау критерийлері:
+Бағалау:
 - 1 балл: Жауап "В" немесе "B" болса
-- 0 балл: Басқа жауап (А, С, D)
+- 0 балл: Басқа жауап
 
-Оқушының жауабы: {answers.get('q1', '(жауап жоқ)')}
+Оқушының жауабы: {q1}
 
 ═══════════════════════════════════════════
 📌 2-СҰРАҚ (Максимум 2 балл) — Талдау
@@ -98,351 +113,414 @@ def evaluate_with_gemini(answers):
 Сұрақ: "Оптикалық кабельді қатты майыстырғанда интернет неге үзіледі?"
 Дұрыс жауап кілті: Жарықтың түсу бұрышы кішірейіп, шекті бұрыштан аз болып қалады. Толық іштей шағылу орындалмай, жарық сыртқа шығып кетеді.
 
-Бағалау критерийлері:
+Бағалау:
 - 2 балл: "Түсу бұрышы", "шекті бұрыш" терминдерін қолданып, толық логикалық тізбек құрса.
 - 1 балл: Логикасы дұрыс, бірақ физикалық терминдері жеткіліксіз болса.
 - 0 балл: Жауап қате немесе тақырыпқа сай емес.
 
-Оқушының жауабы: {answers.get('q2', '(жауап жоқ)')}
+Оқушының жауабы: {q2}
 
 ═══════════════════════════════════════════
 📌 3-СҰРАҚ (Максимум 2 балл) — Сыни бағалау
 ═══════════════════════════════════════════
 Сұрақ: "Ішкі өзегі су (n=1.33), сыртқы қабықшасы шыны (n=1.5) болатын оптикалық талшық жұмыс істей ме?"
-Дұрыс жауап кілті: ЖОҚ, жұмыс істемейді. Толық іштей шағылу үшін жарық тығыздығы көп ортадан аз ортаға өтуі керек (n1 > n2). Мұнда керісінше: ішкі n=1.33 < сыртқы n=1.5. Сондықтан жарық судан шыныға сынып өтіп, сыртқа шашырайды.
+Дұрыс жауап кілті: ЖОҚ, жұмыс істемейді. Толық іштей шағылу үшін жарық тығыздығы көп ортадан аз ортаға өтуі керек (n1 > n2). Мұнда керісінше: ішкі n=1.33 < сыртқы n=1.5. Жарық судан шыныға сынып өтіп, сыртқа шашырайды.
 
-Бағалау критерийлері:
+Бағалау:
 - 2 балл: "Жоқ" деп жауап беріп, n1 > n2 шартын немесе "тығыздығы көп ортадан аз ортаға" ережесін нақты түсіндірсе.
-- 1 балл: "Жоқ, себебі судың тығыздығы аз" деп жалпылама айтса, ережені толық ашпаса.
-- 0 балл: "Иә жұмыс істейді" деп жазса немесе мүлдем қате негіздеме берсе.
+- 1 балл: "Жоқ, себебі судың тығыздығы аз" деп жалпылама айтса.
+- 0 балл: "Иә жұмыс істейді" деп жазса немесе қате негіздеме берсе.
 
-Оқушының жауабы: {answers.get('q3', '(жауап жоқ)')}
+Оқушының жауабы: {q3}
 
 ═══════════════════════════════════════════
-⚠️ ТАПСЫРМА:
-Әр сұраққа әділ балл қой. Жалпы максимум — 5 балл.
-Қатал, бірақ мотивация беретін қазақ тіліндегі кері байланыс жаз.
+ТАПСЫРМА: Әр сұраққа әділ балл қой. Қазақ тілінде қатал, бірақ мотивация беретін кері байланыс жаз.
 
-Нәтижені ТЕК ҚАНА мынадай JSON форматында қайтар (ешқандай қосымша мәтінсіз, ```json белгілерінсіз):
+МАҢЫЗДЫ: Жауапты ТЕК ҚАНА осы JSON форматында қайтар, басқа ештеңе жазба:
+
 {{
-  "q1_score": (0 немесе 1),
-  "q2_score": (0, 1 немесе 2),
-  "q3_score": (0, 1 немесе 2),
-  "total_score": (жалпы балл, 0-5),
-  "q1_feedback": "1-сұрақ бойынша қысқаша түсінік (1-2 сөйлем)",
-  "q2_feedback": "2-сұрақ бойынша қысқаша түсінік (2-3 сөйлем, қате болса дұрысын көрсет)",
-  "q3_feedback": "3-сұрақ бойынша қысқаша түсінік (2-3 сөйлем, қате болса дұрысын көрсет)",
-  "general_feedback": "Оқушыға жалпы мотивация беретін қысқа қорытынды (1-2 сөйлем)"
+  "q1_score": 0,
+  "q2_score": 0,
+  "q3_score": 0,
+  "total_score": 0,
+  "q1_feedback": "1-сұрақ бойынша түсінік",
+  "q2_feedback": "2-сұрақ бойынша түсінік",
+  "q3_feedback": "3-сұрақ бойынша түсінік",
+  "general_feedback": "Жалпы мотивация беретін қорытынды"
 }}"""
 
-        response = model.generate_content(prompt)
-        result_text = response.text.strip()
+    try:
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        response = client.models.generate_content(
+            model="gemini-2.0-flash-exp",
+            contents=prompt
+        )
         
-        if result_text.startswith("```json"):
-            result_text = result_text[7:]
-        if result_text.startswith("```"):
-            result_text = result_text[3:]
-        if result_text.endswith("```"):
-            result_text = result_text[:-3]
-        result_text = result_text.strip()
+        text = response.text.strip()
         
-        result = json.loads(result_text)
+        # JSON-ды тазалау
+        if text.startswith("```json"):
+            text = text[7:]
+        elif text.startswith("```"):
+            text = text[3:]
+        if text.endswith("```"):
+            text = text[:-3]
+        text = text.strip()
+        
+        result = json.loads(text)
+        
+        # Балл дұрыс есептелсе де, қайта қорытынды жасаймыз
+        result['total_score'] = (
+            int(result.get('q1_score', 0)) +
+            int(result.get('q2_score', 0)) +
+            int(result.get('q3_score', 0))
+        )
         return result
+    
+    except json.JSONDecodeError as e:
+        return {
+            "error": f"JSON parsing қатесі: {str(e)}",
+            "q1_score": 0, "q2_score": 0, "q3_score": 0, "total_score": 0,
+            "q1_feedback": "AI жауабын оқу қатесі",
+            "q2_feedback": "AI жауабын оқу қатесі",
+            "q3_feedback": "AI жауабын оқу қатесі",
+            "general_feedback": "Мұғалім қолмен тексереді."
+        }
     except Exception as e:
         return {
-            "q1_score": 0,
-            "q2_score": 0,
-            "q3_score": 0,
-            "total_score": 0,
-            "q1_feedback": "AI қатесі",
-            "q2_feedback": "AI қатесі",
-            "q3_feedback": "AI қатесі",
-            "general_feedback": f"⚠️ AI талдау қатесі: {str(e)}. Мұғалім қолмен тексереді."
+            "error": f"Gemini API қатесі: {str(e)}",
+            "q1_score": 0, "q2_score": 0, "q3_score": 0, "total_score": 0,
+            "q1_feedback": "AI тексеру қатесі",
+            "q2_feedback": "AI тексеру қатесі",
+            "q3_feedback": "AI тексеру қатесі",
+            "general_feedback": "Мұғалім қолмен тексереді."
         }
 
-def send_data(payload):
-    headers = {"apikey": KEY, "Authorization": f"Bearer {KEY}", "Content-Type": "application/json"}
+
+# =============================================================================
+# 5. SUPABASE ФУНКЦИЯЛАРЫ
+# =============================================================================
+def save_to_supabase(payload):
+    """Supabase-ке сақтау. Қате болса да True қайтарады (оқушыға нәтиже көрсетілуі үшін)."""
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json"
+    }
     try:
-        return requests.post(f"{URL}/rest/v1/{TABLE_NAME}", json=payload, headers=headers, timeout=10)
-    except Exception as e:
-        return None
+        r = requests.post(
+            f"{SUPABASE_URL}/rest/v1/{TABLE_NAME}",
+            json=payload,
+            headers=headers,
+            timeout=10
+        )
+        return r.status_code in [200, 201, 204]
+    except Exception:
+        return False
 
-# --- 4. НЕГІЗГІ БЕТ ---
-st.markdown("<h1 class='main-title'>🌊 PISA ТАПСЫРМАСЫ: «МҰХИТ ТҮБІНДЕГІ ЖАРЫҚ»</h1>", unsafe_allow_html=True)
 
-# ========== НӘТИЖЕ КӨРІНЕТІН БЕТ ==========
-if st.session_state.submitted and st.session_state.last_result:
-    result = st.session_state.last_result
-    total = result.get('total_score', 0)
+def search_supabase(query):
+    """Supabase-тен іздеу."""
+    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
+    try:
+        r = requests.get(
+            f"{SUPABASE_URL}/rest/v1/{TABLE_NAME}?student_name=ilike.*{query}*&select=*&order=id.desc",
+            headers=headers,
+            timeout=10
+        )
+        if r.status_code == 200:
+            return r.json()
+    except Exception:
+        pass
+    return None
+
+
+# =============================================================================
+# 6. НӘТИЖЕ БЕТІ
+# =============================================================================
+def show_result_page():
+    r = st.session_state.result_data
+    total = r.get('total_score', 0)
     
     st.balloons()
     
-    st.markdown("<div class='result-card'>", unsafe_allow_html=True)
+    # Қате болса ескерту
+    if r.get('error'):
+        st.error(f"⚠️ {r['error']}")
+    
+    # Жалпы балл
     st.markdown("## 🎉 Жауаптарың тексерілді!")
     
     col1, col2 = st.columns([1, 2])
     with col1:
         st.metric("📊 Жиналған балл", f"{total} / 5")
         
-        if total >= 5:
+        if total == 5:
             st.success("🌟 Өте жақсы!")
-        elif total >= 4:
+        elif total == 4:
             st.success("👍 Жақсы!")
-        elif total >= 3:
+        elif total == 3:
             st.info("📘 Қанағаттанарлық")
-        elif total >= 2:
-            st.warning("📖 Орташа, қайталау керек")
+        elif total >= 1:
+            st.warning("📖 Қайталау керек")
         else:
             st.error("⚠️ Тақырыпты қайта оқу керек")
     
     with col2:
         st.markdown("### 💬 Жалпы кері байланыс:")
-        st.info(result.get('general_feedback', ''))
+        st.info(r.get('general_feedback', ''))
     
-    st.markdown("</div>", unsafe_allow_html=True)
-    
+    st.markdown("---")
     st.markdown("### 📝 Әр сұрақ бойынша талдау:")
     
     # 1-сұрақ
-    q1_score = result.get('q1_score', 0)
-    with st.expander(f"📌 1-сұрақ: {q1_score}/1 балл", expanded=True):
-        if q1_score == 1:
-            st.success(f"✅ {result.get('q1_feedback', '')}")
+    q1s = r.get('q1_score', 0)
+    with st.expander(f"📌 1-сұрақ (Көп таңдаулы): **{q1s}/1 балл**", expanded=True):
+        if q1s == 1:
+            st.success(f"✅ {r.get('q1_feedback', '')}")
         else:
-            st.error(f"❌ {result.get('q1_feedback', '')}")
+            st.error(f"❌ {r.get('q1_feedback', '')}")
     
     # 2-сұрақ
-    q2_score = result.get('q2_score', 0)
-    with st.expander(f"📌 2-сұрақ: {q2_score}/2 балл", expanded=True):
-        if q2_score == 2:
-            st.success(f"✅ {result.get('q2_feedback', '')}")
-        elif q2_score == 1:
-            st.warning(f"⚠️ {result.get('q2_feedback', '')}")
+    q2s = r.get('q2_score', 0)
+    with st.expander(f"📌 2-сұрақ (Талдау): **{q2s}/2 балл**", expanded=True):
+        if q2s == 2:
+            st.success(f"✅ {r.get('q2_feedback', '')}")
+        elif q2s == 1:
+            st.warning(f"⚠️ {r.get('q2_feedback', '')}")
         else:
-            st.error(f"❌ {result.get('q2_feedback', '')}")
+            st.error(f"❌ {r.get('q2_feedback', '')}")
     
     # 3-сұрақ
-    q3_score = result.get('q3_score', 0)
-    with st.expander(f"📌 3-сұрақ: {q3_score}/2 балл", expanded=True):
-        if q3_score == 2:
-            st.success(f"✅ {result.get('q3_feedback', '')}")
-        elif q3_score == 1:
-            st.warning(f"⚠️ {result.get('q3_feedback', '')}")
+    q3s = r.get('q3_score', 0)
+    with st.expander(f"📌 3-сұрақ (Сыни бағалау): **{q3s}/2 балл**", expanded=True):
+        if q3s == 2:
+            st.success(f"✅ {r.get('q3_feedback', '')}")
+        elif q3s == 1:
+            st.warning(f"⚠️ {r.get('q3_feedback', '')}")
         else:
-            st.error(f"❌ {result.get('q3_feedback', '')}")
+            st.error(f"❌ {r.get('q3_feedback', '')}")
     
     st.markdown("---")
-    if st.button("🔄 Қайта бастау", use_container_width=True):
-        st.session_state.submitted = False
-        st.session_state.last_result = None
+    if st.button("🔄 Қайта бастау", use_container_width=True, type="primary"):
+        st.session_state.page = 'exam'
+        st.session_state.result_data = None
         st.rerun()
 
-# ========== ТАПСЫРМА БЕТІ ==========
-else:
+
+# =============================================================================
+# 7. ТАПСЫРМА БЕТІ
+# =============================================================================
+def show_exam_page():
+    # Кіріспе мәтін
     st.markdown("""
     <div class='intro-box'>
     <h3>📖 Кіріспе мәтін</h3>
-    <p>Бүгінгі таңда біздің үйімізге жоғары жылдамдықты интернет мыс сымдар арқылы емес, 
-    <b>оптикалық талшықтар (кабельдер)</b> арқылы келеді. Оптикалық талшық – шашымыздың қалыңдығындай 
-    ғана болатын өте жіңішке мөлдір шыны немесе пластик жіп. Интернет ақпараты осы жіптің ішімен 
-    жарық сәулесі түрінде мыңдаған шақырымға (тіпті мұхиттардың астымен) секундына 
+    <p>Бүгінгі таңда біздің үйімізге жоғары жылдамдықты интернет мыс сымдар арқылы емес,
+    <b>оптикалық талшықтар (кабельдер)</b> арқылы келеді. Оптикалық талшық – шашымыздың қалыңдығындай
+    ғана болатын өте жіңішке мөлдір шыны немесе пластик жіп. Интернет ақпараты осы жіптің ішімен
+    жарық сәулесі түрінде мыңдаған шақырымға (тіпті мұхиттардың астымен) секундына
     <b>300 000 км жылдамдықпен</b> тасымалданады.</p>
-    
-    <p>Жарық мөлдір шынының ішінен неге сыртқа шығып кетпейді? Оның сыры – кабельдің құрылысында. 
-    Кабель екі қабаттан тұрады: <b>ішкі мөлдір өзек</b> (оның оптикалық тығыздығы жоғары) және 
-    <b>сыртқы қабықша</b> (оның оптикалық тығыздығы төмен). Жарық сәулесі кабель ішіне белгілі бір 
-    бұрышпен жіберіледі де, қабырғаға соғылып, сыртқа шыға алмай, зигзаг тәрізді іштей шағылысып 
+
+    <p>Жарық мөлдір шынының ішінен неге сыртқа шығып кетпейді? Оның сыры – кабельдің құрылысында.
+    Кабель екі қабаттан тұрады: <b>ішкі мөлдір өзек</b> (оның оптикалық тығыздығы жоғары) және
+    <b>сыртқы қабықша</b> (оның оптикалық тығыздығы төмен). Жарық сәулесі кабель ішіне белгілі бір
+    бұрышпен жіберіледі де, қабырғаға соғылып, сыртқа шыға алмай, зигзаг тәрізді іштей шағылысып
     алға қарай жүре береді. Бұл құбылыс физикада <b>толық іштей шағылу</b> деп аталады.</p>
     </div>
     """, unsafe_allow_html=True)
     
     st.warning("⚠️ **Нұсқаулық:** Мәтінді мұқият оқып, сұрақтарға толық жауап беріңіз. Басқа терезеге өтпеңіз — анти-чит жүйесі жұмыс істеп тұр!")
     
+    # Оқушы мәліметі
     col1, col2 = st.columns(2)
     with col1:
-        name = st.text_input("👤 Оқушының аты-жөні:", placeholder="Мысалы: Асқаров Нұрлан")
+        name = st.text_input("👤 Оқушының аты-жөні:", placeholder="Мысалы: Асқаров Нұрлан", key="name_input")
     with col2:
-        s_class = st.selectbox("🏫 Сыныбыңыз:", ["8 А", "8 Б", "8 В", "8 Г", "9 А", "9 Б", "9 В"])
-
-    if name:
-        components.html(f"""
-            <script>
-            let isSubmitting = false;
-            document.addEventListener("visibilitychange", function() {{
-                if (document.hidden && !isSubmitting) {{
-                    const payload = {{
-                        student_name: "{name}",
-                        student_class: "{s_class}",
-                        status: "cheated",
-                        answers: {{ "lang": "kz" }},
-                        ai_feedback: "🚫 ЖҰМЫС ЖОЙЫЛДЫ: Анти-чит жүйесі басқа бетке өткеніңізді анықтады.",
-                        score: 0
-                    }};
-                    fetch('{URL}/rest/v1/{TABLE_NAME}', {{
-                        method: 'POST',
-                        headers: {{ 'apikey': '{KEY}', 'Authorization': 'Bearer {KEY}', 'Content-Type': 'application/json' }},
-                        body: JSON.stringify(payload)
-                    }}).then(() => {{ 
-                        isSubmitting = true;
-                        window.parent.location.reload(); 
-                    }});
-                }}
+        s_class = st.selectbox("🏫 Сыныбыңыз:", ["8 А", "8 Б", "8 В", "8 Г", "9 А", "9 Б", "9 В"], key="class_input")
+    
+    if not name or len(name.strip()) < 3:
+        st.info("👆 Тапсырманы бастау үшін аты-жөніңізді жазыңыз.")
+        return
+    
+    # Анти-чит JS
+    components.html(f"""
+    <script>
+    let isSubmitting = false;
+    document.addEventListener("visibilitychange", function() {{
+        if (document.hidden && !isSubmitting) {{
+            const payload = {{
+                student_name: "{name}",
+                student_class: "{s_class}",
+                status: "cheated",
+                answers: {{ "lang": "kz" }},
+                ai_feedback: "🚫 ЖҰМЫС ЖОЙЫЛДЫ: Анти-чит жүйесі басқа бетке өткеніңізді анықтады.",
+                score: 0
+            }};
+            fetch('{SUPABASE_URL}/rest/v1/{TABLE_NAME}', {{
+                method: 'POST',
+                headers: {{
+                    'apikey': '{SUPABASE_KEY}',
+                    'Authorization': 'Bearer {SUPABASE_KEY}',
+                    'Content-Type': 'application/json'
+                }},
+                body: JSON.stringify(payload)
+            }}).then(() => {{
+                isSubmitting = true;
+                window.parent.location.reload();
             }});
-            </script>
-        """, height=0)
-
-        with st.form("pisa_light_exam"):
-            
-            st.markdown("### 📝 СҰРАҚТАР:")
-
-            # 1-сұрақ
-            st.markdown("""
-            <div class='question-box'>
-            <span class='q-number'>1</span><b>Ақпаратты табу (1 балл)</b>
-            <p style='margin-top:10px;'>Мәтінге және физикалық біліміңізге сүйене отырып жауап беріңіз: 
-            <b>Оптикалық талшықтың ішінде жарық сыртқа шашырап кетпей, тек іште қалуы үшін қандай басты шарт орындалуы керек?</b></p>
-            <p><b>А)</b> Түсу бұрышы шекті бұрыштан кіші болуы керек.<br>
-            <b>В)</b> Түсу бұрышы шекті бұрыштан үлкен болуы керек.<br>
-            <b>С)</b> Ішкі өзектің және сыртқы қабықшаның тығыздығы бірдей болуы керек.<br>
-            <b>D)</b> Жарық тек перпендикуляр (90 градус) бағытта түсуі керек.</p>
-            </div>
-            """, unsafe_allow_html=True)
-            q1 = st.radio(
-                "Жауабыңызды таңдаңыз:",
-                ["А", "В", "С", "D"],
-                key="q1",
-                horizontal=True,
-                index=None
-            )
-
-            # 2-сұрақ
-            st.markdown("""
-            <div class='question-box'>
-            <span class='q-number'>2</span><b>Мәселені талдау және түсіндіру (2 балл)</b>
-            <p style='margin-top:10px;'>Интернет орнататын мамандарға (инженерлерге) оптикалық кабельді 
-            бөлме бұрыштарынан өткізгенде оны қатты бұруға (90 градусқа майыстыруға немесе сындыруға) 
-            қатаң тыйым салынады. Егер кабель қатты майысса, интернет сигналы үзіліп қалады. 
-            <b>Толық іштей шағылу заңдылығына сүйене отырып, мұның физикалық себебін түсіндіріңіз.</b></p>
-            </div>
-            """, unsafe_allow_html=True)
-            q2 = st.text_area("Сіздің жауабыңыз:", key="q2", height=130, 
-                              placeholder="Физикалық ұғымдарды (бұрыш, шекті бұрыш, шағылу, сыну) қолданып түсіндіріңіз...")
-
-            # 3-сұрақ
-            st.markdown("""
-            <div class='question-box'>
-            <span class='q-number'>3</span><b>Сыни бағалау (2 балл)</b>
-            <p style='margin-top:10px;'>Жас өнертапқыш жаңа оптикалық талшық жасап шығарғысы келді. 
-            Ол кабельдің <b>ішкі өзегін</b> жасау үшін сыну көрсеткіші <b>n = 1.33</b> болатын суды пайдаланды. 
-            Ал суды сыртынан қаптап тұратын <b>қабықша</b> ретінде сыну көрсеткіші <b>n = 1.5</b> болатын шыны 
-            түтікті қолданды. <b>Өнертапқыштың бұл моделі оптикалық талшық ретінде жұмыс істей ала ма? 
-            Неліктен? Жауабыңызды негіздеңіз.</b></p>
-            </div>
-            """, unsafe_allow_html=True)
-            q3 = st.text_area("Сіздің жауабыңыз:", key="q3", height=150,
-                              placeholder="Иә/Жоқ деп жауап беріп, физикалық заңдылықпен негіздеңіз...")
-
-            submit_btn = st.form_submit_button("📤 ЖҰМЫСТЫ ТАПСЫРУ ✅", use_container_width=True)
-
-            if submit_btn:
-                if not name or len(name) < 3:
-                    st.error("❌ Аты-жөніңізді дұрыс жазыңыз!")
-                elif q1 is None:
-                    st.error("❌ 1-сұраққа жауап таңдаңыз!")
-                elif not q2 or len(q2.strip()) < 10:
-                    st.error("❌ 2-сұраққа толық жауап жазыңыз (кем дегенде 10 әріп)!")
-                elif not q3 or len(q3.strip()) < 10:
-                    st.error("❌ 3-сұраққа толық жауап жазыңыз (кем дегенде 10 әріп)!")
-                else:
-                    with st.spinner("🤖 AI-сарапшы жауаптарыңызды мұқият тексеруде... 15 секунд күте тұрыңыз..."):
-                        student_answers = {
-                            "q1": q1,
-                            "q2": q2,
-                            "q3": q3
-                        }
-                        
-                        evaluation = evaluate_with_gemini(student_answers)
-                        
-                        # Нәтижені session-ге сақтау (бірден көрсету үшін)
-                        st.session_state.last_result = evaluation
-                        
-                        all_answers = {
-                            "lang": "kz",
-                            "questions": student_answers,
-                            "scores": {
-                                "q1": evaluation.get("q1_score", 0),
-                                "q2": evaluation.get("q2_score", 0),
-                                "q3": evaluation.get("q3_score", 0)
-                            }
-                        }
-                        
-                        full_feedback = f"""📊 ЖАЛПЫ БАЛЛ: {evaluation.get('total_score', 0)}/5
-
-💬 {evaluation.get('general_feedback', '')}
-
-─────────────────
-📌 1-сұрақ ({evaluation.get('q1_score', 0)}/1): {evaluation.get('q1_feedback', '')}
-
-📌 2-сұрақ ({evaluation.get('q2_score', 0)}/2): {evaluation.get('q2_feedback', '')}
-
-📌 3-сұрақ ({evaluation.get('q3_score', 0)}/2): {evaluation.get('q3_feedback', '')}"""
-                        
-                        payload = {
-                            "student_name": name,
-                            "student_class": s_class,
-                            "answers": all_answers,
-                            "status": "checked",
-                            "score": evaluation.get("total_score", 0),
-                            "ai_feedback": full_feedback
-                        }
-                        
-                        # Supabase-ке жіберу (қате болса да нәтижені көрсетеміз)
-                        send_data(payload)
-                        st.session_state.submitted = True
-                        st.rerun()
-
-# --- 5. НӘТИЖЕНІ ІЗДЕУ ---
-st.markdown("---")
-st.markdown("### 🔎 Бұрынғы нәтижелерді іздеу")
-search_query = st.text_input("Есімді жазыңыз (Мысалы: Асқаров):", key="search_input")
-
-if search_query:
-    s_headers = {"apikey": KEY, "Authorization": f"Bearer {KEY}"}
-    try:
-        res = requests.get(
-            f"{URL}/rest/v1/{TABLE_NAME}?student_name=ilike.*{search_query}*&select=*&order=id.desc",
-            headers=s_headers,
-            timeout=10
-        )
+        }}
+    }});
+    </script>
+    """, height=0)
+    
+    # Форма
+    with st.form("exam_form"):
+        st.markdown("### 📝 СҰРАҚТАР:")
         
-        if res.status_code == 200:
-            results = res.json()
-            if len(results) > 0:
-                for data in results:
-                    with st.container():
-                        st.markdown(f"#### 👤 {data['student_name']} ({data['student_class']})")
+        # 1-сұрақ
+        st.markdown("""
+        <div class='question-box'>
+        <span class='q-number'>1</span><b>Ақпаратты табу (1 балл)</b>
+        <p style='margin-top:10px;'>Мәтінге және физикалық біліміңізге сүйене отырып жауап беріңіз:
+        <b>Оптикалық талшықтың ішінде жарық сыртқа шашырап кетпей, тек іште қалуы үшін қандай басты шарт орындалуы керек?</b></p>
+        <p><b>А)</b> Түсу бұрышы шекті бұрыштан кіші болуы керек.<br>
+        <b>В)</b> Түсу бұрышы шекті бұрыштан үлкен болуы керек.<br>
+        <b>С)</b> Ішкі өзектің және сыртқы қабықшаның тығыздығы бірдей болуы керек.<br>
+        <b>D)</b> Жарық тек перпендикуляр (90 градус) бағытта түсуі керек.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        q1 = st.radio("Жауабыңызды таңдаңыз:", ["А", "В", "С", "D"], key="q1", horizontal=True, index=None)
+        
+        # 2-сұрақ
+        st.markdown("""
+        <div class='question-box'>
+        <span class='q-number'>2</span><b>Мәселені талдау және түсіндіру (2 балл)</b>
+        <p style='margin-top:10px;'>Интернет орнататын мамандарға (инженерлерге) оптикалық кабельді
+        бөлме бұрыштарынан өткізгенде оны қатты бұруға (90 градусқа майыстыруға немесе сындыруға)
+        қатаң тыйым салынады. Егер кабель қатты майысса, интернет сигналы үзіліп қалады.
+        <b>Толық іштей шағылу заңдылығына сүйене отырып, мұның физикалық себебін түсіндіріңіз.</b></p>
+        </div>
+        """, unsafe_allow_html=True)
+        q2 = st.text_area("Сіздің жауабыңыз:", key="q2", height=130,
+                          placeholder="Физикалық ұғымдарды (бұрыш, шекті бұрыш, шағылу, сыну) қолданып түсіндіріңіз...")
+        
+        # 3-сұрақ
+        st.markdown("""
+        <div class='question-box'>
+        <span class='q-number'>3</span><b>Сыни бағалау (2 балл)</b>
+        <p style='margin-top:10px;'>Жас өнертапқыш жаңа оптикалық талшық жасап шығарғысы келді.
+        Ол кабельдің <b>ішкі өзегін</b> жасау үшін сыну көрсеткіші <b>n = 1.33</b> болатын суды пайдаланды.
+        Ал суды сыртынан қаптап тұратын <b>қабықша</b> ретінде сыну көрсеткіші <b>n = 1.5</b> болатын шыны
+        түтікті қолданды. <b>Өнертапқыштың бұл моделі оптикалық талшық ретінде жұмыс істей ала ма?
+        Неліктен? Жауабыңызды негіздеңіз.</b></p>
+        </div>
+        """, unsafe_allow_html=True)
+        q3 = st.text_area("Сіздің жауабыңыз:", key="q3", height=150,
+                          placeholder="Иә/Жоқ деп жауап беріп, физикалық заңдылықпен негіздеңіз...")
+        
+        submit_btn = st.form_submit_button("📤 ЖҰМЫСТЫ ТАПСЫРУ ✅", use_container_width=True, type="primary")
+        
+        if submit_btn:
+            # Валидация
+            if q1 is None:
+                st.error("❌ 1-сұраққа жауап таңдаңыз!")
+                return
+            if not q2 or len(q2.strip()) < 10:
+                st.error("❌ 2-сұраққа толық жауап жазыңыз (кем дегенде 10 әріп)!")
+                return
+            if not q3 or len(q3.strip()) < 10:
+                st.error("❌ 3-сұраққа толық жауап жазыңыз (кем дегенде 10 әріп)!")
+                return
+            
+            # AI тексеру
+            with st.spinner("🤖 AI-сарапшы жауаптарыңызды мұқият тексеруде... 15-20 секунд күтіңіз..."):
+                evaluation = evaluate_with_gemini(q1, q2, q3)
+            
+            # Supabase-ке сақтау
+            payload = {
+                "student_name": name.strip(),
+                "student_class": s_class,
+                "answers": {
+                    "lang": "kz",
+                    "questions": {"q1": q1, "q2": q2, "q3": q3},
+                    "scores": {
+                        "q1": evaluation.get("q1_score", 0),
+                        "q2": evaluation.get("q2_score", 0),
+                        "q3": evaluation.get("q3_score", 0)
+                    }
+                },
+                "status": "checked",
+                "score": evaluation.get("total_score", 0),
+                "ai_feedback": (
+                    f"📊 ЖАЛПЫ БАЛЛ: {evaluation.get('total_score', 0)}/5\n\n"
+                    f"💬 {evaluation.get('general_feedback', '')}\n\n"
+                    f"─────────────────\n"
+                    f"📌 1-сұрақ ({evaluation.get('q1_score', 0)}/1): {evaluation.get('q1_feedback', '')}\n\n"
+                    f"📌 2-сұрақ ({evaluation.get('q2_score', 0)}/2): {evaluation.get('q2_feedback', '')}\n\n"
+                    f"📌 3-сұрақ ({evaluation.get('q3_score', 0)}/2): {evaluation.get('q3_feedback', '')}"
+                )
+            }
+            save_to_supabase(payload)
+            
+            # Нәтиже бетіне өту
+            st.session_state.result_data = evaluation
+            st.session_state.page = 'result'
+            st.rerun()
+
+
+# =============================================================================
+# 8. ІЗДЕУ БӨЛІМІ
+# =============================================================================
+def show_search_section():
+    st.markdown("---")
+    st.markdown("### 🔎 Бұрынғы нәтижелерді іздеу")
+    search_query = st.text_input("Есімді жазыңыз (Мысалы: Асқаров):", key="search_input")
+    
+    if search_query and len(search_query.strip()) >= 2:
+        results = search_supabase(search_query.strip())
+        
+        if results is None:
+            st.warning("⚠️ Іздеу уақытша қолжетімсіз. Supabase-ке қосылу мәселесі.")
+            return
+        
+        if not results:
+            st.info("🔍 Бұл есіммен жұмыс табылмады.")
+            return
+        
+        for data in results:
+            with st.container():
+                st.markdown(f"#### 👤 {data['student_name']} ({data['student_class']})")
+                
+                if data.get('status') == 'cheated':
+                    st.error("🚫 Жұмыс жойылды: Анти-чит жүйесі іске қосылған.")
+                elif data.get('status') == 'pending':
+                    st.warning("⏳ Тексерілуде... Күте тұрыңыз.")
+                else:
+                    c1, c2 = st.columns([1, 3])
+                    with c1:
+                        score = data.get('score', 0)
+                        st.metric("Жиналған балл", f"{score} / 5")
                         
-                        if data['status'] == 'cheated':
-                            st.error("🚫 Жұмыс жойылды: Анти-чит жүйесі іске қосылған.")
-                        elif data['status'] == 'pending':
-                            st.warning("⏳ Тексерілуде... Күте тұрыңыз.")
-                        else:
-                            col_score, col_fb = st.columns([1, 3])
-                            with col_score:
-                                score = data.get('score', 0)
-                                st.metric("Жиналған балл", f"{score} / 5")
-                                
-                                if 'scores' in data.get('answers', {}):
-                                    scores = data['answers']['scores']
-                                    st.caption(f"1-сұрақ: {scores.get('q1', 0)}/1")
-                                    st.caption(f"2-сұрақ: {scores.get('q2', 0)}/2")
-                                    st.caption(f"3-сұрақ: {scores.get('q3', 0)}/2")
-                            
-                            with col_fb:
-                                with st.expander("📝 AI сарапшының толық талдауы", expanded=True):
-                                    st.write(data.get('ai_feedback', 'Талдау жасалуда...'))
-                        st.markdown("<br>", unsafe_allow_html=True)
-            else:
-                st.info("🔍 Бұл есіммен жұмыс табылмады.")
-    except Exception as e:
-        st.warning(f"⚠️ Іздеу уақытша қолжетімсіз.")
+                        scores = data.get('answers', {}).get('scores', {})
+                        if scores:
+                            st.caption(f"1-сұрақ: {scores.get('q1', 0)}/1")
+                            st.caption(f"2-сұрақ: {scores.get('q2', 0)}/2")
+                            st.caption(f"3-сұрақ: {scores.get('q3', 0)}/2")
+                    with c2:
+                        with st.expander("📝 AI сарапшының толық талдауы", expanded=True):
+                            st.text(data.get('ai_feedback', 'Талдау жасалуда...'))
+                st.markdown("<br>", unsafe_allow_html=True)
+
+
+# =============================================================================
+# 9. НЕГІЗГІ БЕТ
+# =============================================================================
+st.markdown("<h1 class='main-title'>🌊 PISA ТАПСЫРМАСЫ: «МҰХИТ ТҮБІНДЕГІ ЖАРЫҚ»</h1>", unsafe_allow_html=True)
+
+if st.session_state.page == 'result' and st.session_state.result_data:
+    show_result_page()
+else:
+    show_exam_page()
+
+show_search_section()
