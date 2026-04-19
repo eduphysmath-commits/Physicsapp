@@ -7,18 +7,18 @@ import google.generativeai as genai
 # --- 1. ПАРАМЕТРЛЕР ---
 URL = "https://bjqoazdkiyhrdrfkkgaz.supabase.co"
 KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJqcW9hemRraXlocmRyZmtrZ2F6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk3NTM4NjIsImV4cCI6MjA4NTMyOTg2Mn0.0t4S6fa9CmYa6WBdDvkVr4V4H91wLx9xLYtcEdriX4I"
-TABLE_NAME = "pisa_light_kz"  # Жаңа кесте атауы
+TABLE_NAME = "pisa_light_kz"
 
-# Gemini API кілтін st.secrets-тан алыңыз немесе осында қойыңыз
-# Streamlit Cloud-та: Settings > Secrets > GEMINI_API_KEY қосыңыз
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY_HERE")
 
 st.set_page_config(page_title="PISA: Мұхит түбіндегі жарық", layout="wide", page_icon="🌊")
 
 if 'submitted' not in st.session_state:
     st.session_state.submitted = False
+if 'last_result' not in st.session_state:
+    st.session_state.last_result = None
 
-# --- 2. СТИЛЬ (Дизайн) ---
+# --- 2. СТИЛЬ ---
 st.markdown("""
     <style>
     * { -webkit-user-select: none; user-select: none; } 
@@ -59,58 +59,85 @@ st.markdown("""
         font-weight: bold;
         margin-right: 10px;
     }
+    .result-card {
+        background: white;
+        padding: 25px;
+        border-radius: 15px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+        margin: 15px 0;
+        border-top: 5px solid #0288d1;
+    }
     </style>
 """, unsafe_allow_html=True)
 
-# --- 3. GEMINI AI БАҒАЛАУШЫ ---
+# --- 3. GEMINI AI БАҒАЛАУШЫ (ҚАТАЛ СТИЛЬ) ---
 def evaluate_with_gemini(answers):
-    """Gemini API арқылы оқушының жауаптарын тексереді"""
+    """Gemini API арқылы 3 сұрақты бір промптпен тексереді"""
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         model = genai.GenerativeModel('gemini-2.0-flash-exp')
         
-        prompt = f"""Сен — физика пәнінің тәжірибелі мұғалімісің. PISA форматындағы "Мұхит түбіндегі жарық (оптикалық талшық)" тақырыбына оқушы жауаптарын тексер.
+        prompt = f"""Сен физика пәнінің қатал, бірақ әділ сарапшы мұғалімісің.
+Сенің міндетің — 8-сынып оқушысының PISA форматындағы "Мұхит түбіндегі жарық (оптикалық талшық)" тақырыбына берген 3 жауабын тексеру.
 
-📚 БАҒАЛАУ КРИТЕРИЙЛЕРІ (КІЛТ):
+═══════════════════════════════════════════
+📌 1-СҰРАҚ (Максимум 1 балл) — Көп таңдаулы
+═══════════════════════════════════════════
+Сұрақ: "Оптикалық талшықтың ішінде жарық сыртқа шашырап кетпей, тек іште қалуы үшін қандай басты шарт орындалуы керек?"
+Дұрыс жауап кілті: **В** (Түсу бұрышы шекті бұрыштан үлкен болуы керек)
 
-🔹 **1-сұрақ (1 балл)** - Көп таңдаулы:
-Дұрыс жауап: **В** (Түсу бұрышы шекті бұрыштан үлкен болуы керек)
-Оқушы В деп жазса немесе мағынасын толық ашса — 1 балл, басқа жауап — 0 балл.
+Бағалау критерийлері:
+- 1 балл: Жауап "В" немесе "B" болса
+- 0 балл: Басқа жауап (А, С, D)
 
-🔹 **2-сұрақ (2 балл)** - Талдау:
-Толық жауап (2 балл): Кабель майысқанда жарықтың қабырғаға түсу бұрышы өзгереді. Бұрыш кішірейіп, **шекті бұрыштан аз** болады. Нәтижесінде жарық толық іштей шағылмай, **сынып сыртқа шығады**, сигнал жоғалады.
-Жартылай жауап (1 балл): "Бұрыш өзгереді, жарық сыртқа шығады" деп жалпылама айтса, бірақ "шекті бұрыш" терминін қолданбаса.
-0 балл: Жауап жоқ немесе мүлдем қате.
+Оқушының жауабы: {answers.get('q1', '(жауап жоқ)')}
 
-🔹 **3-сұрақ (2 балл)** - Сыни бағалау:
-Толық жауап (2 балл): **ЖОҚ, жұмыс істемейді**. Толық іштей шағылу үшін жарық тығыздығы **көп ортадан аз ортаға** өтуі керек (n1 > n2). Мұнда ішкі су n=1.33 < сыртқы шыны n=1.5. Сондықтан жарық судан шыныға сынып өтіп, сыртқа шашырайды.
-Жартылай жауап (1 балл): Тек "Жоқ, судың тығыздығы аз" деп жазса, ережені толық ашпаса.
-0 балл: "Иә жұмыс істейді" деп жазса немесе себебін дұрыс түсіндірмесе.
+═══════════════════════════════════════════
+📌 2-СҰРАҚ (Максимум 2 балл) — Талдау
+═══════════════════════════════════════════
+Сұрақ: "Оптикалық кабельді қатты майыстырғанда интернет неге үзіледі?"
+Дұрыс жауап кілті: Жарықтың түсу бұрышы кішірейіп, шекті бұрыштан аз болып қалады. Толық іштей шағылу орындалмай, жарық сыртқа шығып кетеді.
 
-📝 ОҚУШЫНЫҢ ЖАУАПТАРЫ:
+Бағалау критерийлері:
+- 2 балл: "Түсу бұрышы", "шекті бұрыш" терминдерін қолданып, толық логикалық тізбек құрса.
+- 1 балл: Логикасы дұрыс, бірақ физикалық терминдері жеткіліксіз болса.
+- 0 балл: Жауап қате немесе тақырыпқа сай емес.
 
-**1-сұрақ:** {answers.get('q1', '(жауап жоқ)')}
+Оқушының жауабы: {answers.get('q2', '(жауап жоқ)')}
 
-**2-сұрақ:** {answers.get('q2', '(жауап жоқ)')}
+═══════════════════════════════════════════
+📌 3-СҰРАҚ (Максимум 2 балл) — Сыни бағалау
+═══════════════════════════════════════════
+Сұрақ: "Ішкі өзегі су (n=1.33), сыртқы қабықшасы шыны (n=1.5) болатын оптикалық талшық жұмыс істей ме?"
+Дұрыс жауап кілті: ЖОҚ, жұмыс істемейді. Толық іштей шағылу үшін жарық тығыздығы көп ортадан аз ортаға өтуі керек (n1 > n2). Мұнда керісінше: ішкі n=1.33 < сыртқы n=1.5. Сондықтан жарық судан шыныға сынып өтіп, сыртқа шашырайды.
 
-**3-сұрақ:** {answers.get('q3', '(жауап жоқ)')}
+Бағалау критерийлері:
+- 2 балл: "Жоқ" деп жауап беріп, n1 > n2 шартын немесе "тығыздығы көп ортадан аз ортаға" ережесін нақты түсіндірсе.
+- 1 балл: "Жоқ, себебі судың тығыздығы аз" деп жалпылама айтса, ережені толық ашпаса.
+- 0 балл: "Иә жұмыс істейді" деп жазса немесе мүлдем қате негіздеме берсе.
 
+Оқушының жауабы: {answers.get('q3', '(жауап жоқ)')}
+
+═══════════════════════════════════════════
 ⚠️ ТАПСЫРМА:
-Әр сұраққа балл қой (критерийлер бойынша). Жалпы балл 5-тен. Содан кейін оқушыға қазақ тілінде достық әрі педагогикалық кері байланыс жаз. Дұрыс жерлерін мақта, қателерін жұмсақ түрде түсіндір.
+Әр сұраққа әділ балл қой. Жалпы максимум — 5 балл.
+Қатал, бірақ мотивация беретін қазақ тіліндегі кері байланыс жаз.
 
-ТЕК осы JSON форматында жауап қайтар (басқа мәтінсіз, ```json белгілерінсіз):
+Нәтижені ТЕК ҚАНА мынадай JSON форматында қайтар (ешқандай қосымша мәтінсіз, ```json белгілерінсіз):
 {{
-  "q1_score": 0-1 саны,
-  "q2_score": 0-2 саны,
-  "q3_score": 0-2 саны,
-  "total_score": жалпы балл (0-5),
-  "feedback": "Оқушыға арналған толық кері байланыс (әр сұрақ бойынша талдау, мақтау мен ұсыныстар)"
+  "q1_score": (0 немесе 1),
+  "q2_score": (0, 1 немесе 2),
+  "q3_score": (0, 1 немесе 2),
+  "total_score": (жалпы балл, 0-5),
+  "q1_feedback": "1-сұрақ бойынша қысқаша түсінік (1-2 сөйлем)",
+  "q2_feedback": "2-сұрақ бойынша қысқаша түсінік (2-3 сөйлем, қате болса дұрысын көрсет)",
+  "q3_feedback": "3-сұрақ бойынша қысқаша түсінік (2-3 сөйлем, қате болса дұрысын көрсет)",
+  "general_feedback": "Оқушыға жалпы мотивация беретін қысқа қорытынды (1-2 сөйлем)"
 }}"""
 
         response = model.generate_content(prompt)
         result_text = response.text.strip()
         
-        # JSON-ды тазалау
         if result_text.startswith("```json"):
             result_text = result_text[7:]
         if result_text.startswith("```"):
@@ -127,24 +154,91 @@ def evaluate_with_gemini(answers):
             "q2_score": 0,
             "q3_score": 0,
             "total_score": 0,
-            "feedback": f"⚠️ AI талдау қатесі: {str(e)}. Мұғалім қолмен тексереді."
+            "q1_feedback": "AI қатесі",
+            "q2_feedback": "AI қатесі",
+            "q3_feedback": "AI қатесі",
+            "general_feedback": f"⚠️ AI талдау қатесі: {str(e)}. Мұғалім қолмен тексереді."
         }
 
 def send_data(payload):
     headers = {"apikey": KEY, "Authorization": f"Bearer {KEY}", "Content-Type": "application/json"}
-    return requests.post(f"{URL}/rest/v1/{TABLE_NAME}", json=payload, headers=headers)
+    try:
+        return requests.post(f"{URL}/rest/v1/{TABLE_NAME}", json=payload, headers=headers, timeout=10)
+    except Exception as e:
+        return None
 
 # --- 4. НЕГІЗГІ БЕТ ---
 st.markdown("<h1 class='main-title'>🌊 PISA ТАПСЫРМАСЫ: «МҰХИТ ТҮБІНДЕГІ ЖАРЫҚ»</h1>", unsafe_allow_html=True)
 
-if st.session_state.submitted:
+# ========== НӘТИЖЕ КӨРІНЕТІН БЕТ ==========
+if st.session_state.submitted and st.session_state.last_result:
+    result = st.session_state.last_result
+    total = result.get('total_score', 0)
+    
     st.balloons()
-    st.success("🎉 Жауаптарың сәтті қабылданды және AI арқылы тексерілді! Төмендегі іздеу бөлімінен нәтижені біле аласың.")
-    if st.button("Қайта бастау 🔄"):
+    
+    st.markdown("<div class='result-card'>", unsafe_allow_html=True)
+    st.markdown("## 🎉 Жауаптарың тексерілді!")
+    
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        st.metric("📊 Жиналған балл", f"{total} / 5")
+        
+        if total >= 5:
+            st.success("🌟 Өте жақсы!")
+        elif total >= 4:
+            st.success("👍 Жақсы!")
+        elif total >= 3:
+            st.info("📘 Қанағаттанарлық")
+        elif total >= 2:
+            st.warning("📖 Орташа, қайталау керек")
+        else:
+            st.error("⚠️ Тақырыпты қайта оқу керек")
+    
+    with col2:
+        st.markdown("### 💬 Жалпы кері байланыс:")
+        st.info(result.get('general_feedback', ''))
+    
+    st.markdown("</div>", unsafe_allow_html=True)
+    
+    st.markdown("### 📝 Әр сұрақ бойынша талдау:")
+    
+    # 1-сұрақ
+    q1_score = result.get('q1_score', 0)
+    with st.expander(f"📌 1-сұрақ: {q1_score}/1 балл", expanded=True):
+        if q1_score == 1:
+            st.success(f"✅ {result.get('q1_feedback', '')}")
+        else:
+            st.error(f"❌ {result.get('q1_feedback', '')}")
+    
+    # 2-сұрақ
+    q2_score = result.get('q2_score', 0)
+    with st.expander(f"📌 2-сұрақ: {q2_score}/2 балл", expanded=True):
+        if q2_score == 2:
+            st.success(f"✅ {result.get('q2_feedback', '')}")
+        elif q2_score == 1:
+            st.warning(f"⚠️ {result.get('q2_feedback', '')}")
+        else:
+            st.error(f"❌ {result.get('q2_feedback', '')}")
+    
+    # 3-сұрақ
+    q3_score = result.get('q3_score', 0)
+    with st.expander(f"📌 3-сұрақ: {q3_score}/2 балл", expanded=True):
+        if q3_score == 2:
+            st.success(f"✅ {result.get('q3_feedback', '')}")
+        elif q3_score == 1:
+            st.warning(f"⚠️ {result.get('q3_feedback', '')}")
+        else:
+            st.error(f"❌ {result.get('q3_feedback', '')}")
+    
+    st.markdown("---")
+    if st.button("🔄 Қайта бастау", use_container_width=True):
         st.session_state.submitted = False
+        st.session_state.last_result = None
         st.rerun()
+
+# ========== ТАПСЫРМА БЕТІ ==========
 else:
-    # Кіріспе мәтін
     st.markdown("""
     <div class='intro-box'>
     <h3>📖 Кіріспе мәтін</h3>
@@ -171,7 +265,6 @@ else:
         s_class = st.selectbox("🏫 Сыныбыңыз:", ["8 А", "8 Б", "8 В", "8 Г", "9 А", "9 Б", "9 В"])
 
     if name:
-        # АНТИ-ЧИТ JS
         components.html(f"""
             <script>
             let isSubmitting = false;
@@ -257,19 +350,21 @@ else:
                 elif q1 is None:
                     st.error("❌ 1-сұраққа жауап таңдаңыз!")
                 elif not q2 or len(q2.strip()) < 10:
-                    st.error("❌ 2-сұраққа толық жауап жазыңыз!")
+                    st.error("❌ 2-сұраққа толық жауап жазыңыз (кем дегенде 10 әріп)!")
                 elif not q3 or len(q3.strip()) < 10:
-                    st.error("❌ 3-сұраққа толық жауап жазыңыз!")
+                    st.error("❌ 3-сұраққа толық жауап жазыңыз (кем дегенде 10 әріп)!")
                 else:
-                    with st.spinner("🤖 AI жауаптарыңызды тексеруде... Күте тұрыңыз..."):
+                    with st.spinner("🤖 AI-сарапшы жауаптарыңызды мұқият тексеруде... 15 секунд күте тұрыңыз..."):
                         student_answers = {
                             "q1": q1,
                             "q2": q2,
                             "q3": q3
                         }
                         
-                        # Gemini арқылы бағалау
                         evaluation = evaluate_with_gemini(student_answers)
+                        
+                        # Нәтижені session-ге сақтау (бірден көрсету үшін)
+                        st.session_state.last_result = evaluation
                         
                         all_answers = {
                             "lang": "kz",
@@ -281,71 +376,73 @@ else:
                             }
                         }
                         
+                        full_feedback = f"""📊 ЖАЛПЫ БАЛЛ: {evaluation.get('total_score', 0)}/5
+
+💬 {evaluation.get('general_feedback', '')}
+
+─────────────────
+📌 1-сұрақ ({evaluation.get('q1_score', 0)}/1): {evaluation.get('q1_feedback', '')}
+
+📌 2-сұрақ ({evaluation.get('q2_score', 0)}/2): {evaluation.get('q2_feedback', '')}
+
+📌 3-сұрақ ({evaluation.get('q3_score', 0)}/2): {evaluation.get('q3_feedback', '')}"""
+                        
                         payload = {
                             "student_name": name,
                             "student_class": s_class,
                             "answers": all_answers,
                             "status": "checked",
                             "score": evaluation.get("total_score", 0),
-                            "ai_feedback": evaluation.get("feedback", "Талдау жасалмады.")
+                            "ai_feedback": full_feedback
                         }
                         
-                        resp = send_data(payload)
-                        if resp.status_code in [200, 201, 204]:
-                            st.session_state.submitted = True
-                            st.rerun()
-                        else:
-                            st.error(f"⚠️ Қате: {resp.text}")
+                        # Supabase-ке жіберу (қате болса да нәтижені көрсетеміз)
+                        send_data(payload)
+                        st.session_state.submitted = True
+                        st.rerun()
 
 # --- 5. НӘТИЖЕНІ ІЗДЕУ ---
 st.markdown("---")
-st.markdown("### 🔎 Нәтижеңді тексер")
-search_query = st.text_input("Есіміңді жаз (Мысалы: Асқаров):", key="search_input")
+st.markdown("### 🔎 Бұрынғы нәтижелерді іздеу")
+search_query = st.text_input("Есімді жазыңыз (Мысалы: Асқаров):", key="search_input")
 
 if search_query:
     s_headers = {"apikey": KEY, "Authorization": f"Bearer {KEY}"}
-    res = requests.get(
-        f"{URL}/rest/v1/{TABLE_NAME}?student_name=ilike.*{search_query}*&select=*&order=id.desc",
-        headers=s_headers
-    )
-    
-    if res.status_code == 200:
-        results = res.json()
-        if len(results) > 0:
-            for data in results:
-                with st.container():
-                    st.markdown(f"#### 👤 {data['student_name']} ({data['student_class']})")
-                    
-                    if data['status'] == 'cheated':
-                        st.error("🚫 Жұмыс жойылды: Анти-чит жүйесі іске қосылған.")
-                    elif data['status'] == 'pending':
-                        st.warning("⏳ Тексерілуде... Күте тұрыңыз.")
-                    else:
-                        col_score, col_fb = st.columns([1, 3])
-                        with col_score:
-                            score = data.get('score', 0)
-                            st.metric("Жиналған балл", f"{score} / 5")
-                            
-                            # Балл бойынша баға
-                            if score >= 5:
-                                st.success("🌟 Өте жақсы!")
-                            elif score >= 4:
-                                st.info("👍 Жақсы")
-                            elif score >= 3:
-                                st.info("📘 Қанағаттанарлық")
-                            else:
-                                st.warning("📖 Қайталау керек")
-                            
-                            # Жеке сұрақтар бойынша балл
-                            if 'scores' in data.get('answers', {}):
-                                scores = data['answers']['scores']
-                                st.caption(f"1-сұрақ: {scores.get('q1', 0)}/1")
-                                st.caption(f"2-сұрақ: {scores.get('q2', 0)}/2")
-                                st.caption(f"3-сұрақ: {scores.get('q3', 0)}/2")
+    try:
+        res = requests.get(
+            f"{URL}/rest/v1/{TABLE_NAME}?student_name=ilike.*{search_query}*&select=*&order=id.desc",
+            headers=s_headers,
+            timeout=10
+        )
+        
+        if res.status_code == 200:
+            results = res.json()
+            if len(results) > 0:
+                for data in results:
+                    with st.container():
+                        st.markdown(f"#### 👤 {data['student_name']} ({data['student_class']})")
                         
-                        with col_fb:
-                            with st.expander("📝 AI мұғалімнің толық талдауы", expanded=True):
-                                st.write(data.get('ai_feedback', 'Талдау жасалуда...'))
-                    st.markdown("<br>", unsafe_allow_html=True)
-        else:
-            st.info("🔍 Бұл есіммен жұмыс табылмады.")
+                        if data['status'] == 'cheated':
+                            st.error("🚫 Жұмыс жойылды: Анти-чит жүйесі іске қосылған.")
+                        elif data['status'] == 'pending':
+                            st.warning("⏳ Тексерілуде... Күте тұрыңыз.")
+                        else:
+                            col_score, col_fb = st.columns([1, 3])
+                            with col_score:
+                                score = data.get('score', 0)
+                                st.metric("Жиналған балл", f"{score} / 5")
+                                
+                                if 'scores' in data.get('answers', {}):
+                                    scores = data['answers']['scores']
+                                    st.caption(f"1-сұрақ: {scores.get('q1', 0)}/1")
+                                    st.caption(f"2-сұрақ: {scores.get('q2', 0)}/2")
+                                    st.caption(f"3-сұрақ: {scores.get('q3', 0)}/2")
+                            
+                            with col_fb:
+                                with st.expander("📝 AI сарапшының толық талдауы", expanded=True):
+                                    st.write(data.get('ai_feedback', 'Талдау жасалуда...'))
+                        st.markdown("<br>", unsafe_allow_html=True)
+            else:
+                st.info("🔍 Бұл есіммен жұмыс табылмады.")
+    except Exception as e:
+        st.warning(f"⚠️ Іздеу уақытша қолжетімсіз.")
